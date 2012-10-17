@@ -25,6 +25,8 @@ module Resque
 
     set :static, true
 
+    enable :logging, :sessions
+
     helpers do
       include Rack::Utils
       alias_method :h, :escape_html
@@ -146,6 +148,27 @@ module Resque
       content_type "text/html"
       @polling = true
       show(page.to_sym, false).gsub(/\s{1,}/, ' ')
+    end
+
+    # Allow per-request Redis connections
+    before do
+      if session[:redis_url]
+        Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
+      else
+        Resque.redis = nil
+      end
+    end
+
+    # Clean up per-request Redis connections
+    after do
+      Resque.redis.quit if Resque.redis
+      Resque.redis = nil
+    end
+
+    # Set a Redis instance for this session
+    get "/login/:url" do
+      session[:redis_url] = "redis://#{params[:url]}"
+      redirect "/overview"
     end
 
     # to make things easier on ourselves
