@@ -154,6 +154,7 @@ module Resque
     before do
       if session[:redis_url]
         Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
+        Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
       else
         Resque.redis = nil
       end
@@ -166,8 +167,9 @@ module Resque
     end
 
     # Set a Redis instance for this session
-    get "/login/:url" do
+    get "/login/:url/:namespace" do
       session[:redis_url] = "redis://#{params[:url]}"
+      session[:redis_namespace] = params[:namespace]
       redirect "/overview"
     end
 
