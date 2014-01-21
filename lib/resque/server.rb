@@ -41,12 +41,10 @@ module Resque
       setup_rollbar
     end
 
+    # Report errors to Rollbar.
     error do
       request_data = RequestDataExtractor.new.from_rack( env )
-      begin
-        Rollbar.report_exception( env['sinatra.error'], request_data )
-      rescue
-      end
+      Rollbar.report_exception( env['sinatra.error'], request_data ) rescue nil
       "An error occurred and has been reported."
     end
 
