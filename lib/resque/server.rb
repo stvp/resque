@@ -26,6 +26,9 @@ module Resque
 
     set :static, true
 
+    # Allow iframe embedding
+    set :protection, :except => :frame_options
+
     enable :logging, :sessions
 
     configure do
