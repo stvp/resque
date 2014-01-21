@@ -30,10 +30,10 @@ module Resque
     set :protection, :except => :frame_options
 
     use Rack::Session::Cookie, :key => 'rack.session',
-                               :domain => 'resque-web-public.herokuapp.com',
+                               :domain => ENV["SESSION_DOMAIN"],
                                :path => '/',
                                :expire_after => 21600,
-                               :secret => 'dd1e8492a8951cfa08bbd6f96737e00b'
+                               :secret => ENV["SESSION_SECRET"]
 
     enable :logging
 
