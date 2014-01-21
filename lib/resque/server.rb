@@ -4,6 +4,7 @@ require 'resque'
 require 'resque/version'
 require 'time'
 require 'yaml'
+require 'resque/server/rollbar'
 
 if defined? Encoding
   Encoding.default_external = Encoding::UTF_8
@@ -26,6 +27,16 @@ module Resque
     set :static, true
 
     enable :logging, :sessions
+
+    configure do
+      setup_rollbar
+    end
+
+    error do
+      request_data = RequestDataExtractor.new.from_rack( env )
+      Rollbar.report_exception( env['sinatra.error'], request_data )
+      "An error occurred and has been reported."
+    end
 
     helpers do
       include Rack::Utils

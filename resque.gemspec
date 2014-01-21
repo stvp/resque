@@ -21,6 +21,7 @@ Gem::Specification.new do |s|
   s.extra_rdoc_files  = [ "LICENSE", "README.markdown" ]
   s.rdoc_options      = ["--charset=UTF-8"]
 
+  s.add_dependency "rollbar"
   s.add_dependency "redis"
   s.add_dependency "hiredis"
   s.add_dependency "redis-namespace", "~> 1.3"
