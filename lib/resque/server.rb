@@ -33,10 +33,7 @@ module Resque
     end
 
     error do
-      puts "ERROR:"
       request_data = RequestDataExtractor.new.from_rack( env )
-      p request_data
-      p env['sinatra.error']
       begin
         Rollbar.report_exception( env['sinatra.error'], request_data )
       rescue
