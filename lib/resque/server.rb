@@ -29,7 +29,13 @@ module Resque
     # Allow iframe embedding
     set :protection, :except => :frame_options
 
-    enable :logging, :sessions
+    use Rack::Session::Cookie, :key => 'rack.session',
+                               :domain => 'resque-web-public.herokuapp.com',
+                               :path => '/',
+                               :expire_after => 21600,
+                               :secret => 'dd1e8492a8951cfa08bbd6f96737e00b'
+
+    enable :logging
 
     configure do
       setup_rollbar
