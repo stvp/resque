@@ -201,6 +201,10 @@ module Resque
       redirect "/overview"
     end
 
+    get "/ping" do
+      "ok"
+    end
+
     # to make things easier on ourselves
     get "/?" do
       redirect url_path(:overview)
