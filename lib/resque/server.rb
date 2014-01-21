@@ -155,6 +155,17 @@ module Resque
       if session[:redis_url]
         Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
         Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
+
+        # Try establishing the connection a few times to handle servers that
+        # timeout a lot (*cough* Garantia Data *cough*).
+        tries = 0
+        begin
+          tries = tries + 1
+          Resque.redis.ping
+        rescue
+          raise if tries == 3
+          retry
+        end
       else
         Resque.redis = nil
       end
