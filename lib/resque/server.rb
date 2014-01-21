@@ -189,7 +189,7 @@ module Resque
     end
 
     # Set a Redis instance for this session
-    get "/login/:url/:namespace" do
+    get "/login/:url/?:namespace?/?" do
       session[:redis_url] = "redis://#{params[:url]}"
       session[:redis_namespace] = params[:namespace]
       redirect "/overview"
