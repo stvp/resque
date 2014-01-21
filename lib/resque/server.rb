@@ -169,8 +169,6 @@ module Resque
 
     # Allow per-request Redis connections
     before do
-      pass if request.path_info.split('/')[1] == "ping"
-
       if session[:redis_url]
         Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
         Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
@@ -192,7 +190,7 @@ module Resque
 
     # Clean up per-request Redis connections
     after do
-      Resque.redis.quit if Resque.redis
+      Resque.redis.quit if Resque.redis rescue nil
       Resque.redis = nil
     end
 
