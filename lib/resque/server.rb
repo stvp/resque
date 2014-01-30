@@ -32,7 +32,6 @@ module Resque
     use Rack::Session::Cookie, :key => 'rack.session',
                                :domain => ENV["SESSION_DOMAIN"],
                                :path => '/',
-                               :expire_after => 21600,
                                :secret => ENV["SESSION_SECRET"]
 
     enable :logging
