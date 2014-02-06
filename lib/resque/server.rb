@@ -153,6 +153,30 @@ module Resque
         "<p class='poll'>#{text}</p>"
       end
 
+      def load_redis_from_session
+        if session[:redis_url].to_s != ""
+          Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
+          Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
+          true
+        else
+          Resque.redis = nil
+          false
+        end
+      end
+
+      def establish_redis_connection
+        # Try establishing the connection a few times to handle servers that
+        # time out a lot (*cough* Redis Cloud *cough*).
+        tries = 0
+        begin
+          tries = tries + 1
+          Resque.redis.ping
+        rescue
+          raise if tries == 3
+          retry
+        end
+      end
+
     end
 
     def show(page, layout = true)
@@ -170,27 +194,12 @@ module Resque
       show(page.to_sym, false).gsub(/\s{1,}/, ' ')
     end
 
-    # Allow per-request Redis connections
     before do
       pass if %w[login ping].include? request.path_info.split('/')[1]
 
-      if session[:redis_url].to_s != ""
-        Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
-        Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
-
-        # Try establishing the connection a few times to handle servers that
-        # timeout a lot (*cough* Garantia Data *cough*).
-        tries = 0
-        begin
-          tries = tries + 1
-          Resque.redis.ping
-        rescue
-          raise if tries == 3
-          retry
-        end
-      else
-        Resque.redis = nil
-        raise "No redis_url in session #{session.inspect}"
+      # Per-request Redis connections
+      if load_redis_from_session
+        establish_redis_connection
       end
     end
 
@@ -200,7 +209,7 @@ module Resque
       Resque.redis = nil
     end
 
-    # Set a Redis instance for this session
+    # Set a Redis URL for this session
     get "/login/:url/?:namespace?/?" do
       session[:redis_url] = "redis://#{params[:url]}"
       session[:redis_namespace] = params[:namespace]
