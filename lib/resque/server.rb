@@ -200,6 +200,8 @@ module Resque
       # Per-request Redis connections
       if load_redis_from_session
         establish_redis_connection
+      else
+        raise "Couldn't load Redis from session: #{session.inspect}"
       end
     end
 
