@@ -174,7 +174,7 @@ module Resque
     before do
       pass if %w[login ping].include? request.path_info.split('/')[1]
 
-      if session[:redis_url]
+      if session[:redis_url].to_s != ""
         Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
         Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
 
@@ -190,6 +190,7 @@ module Resque
         end
       else
         Resque.redis = nil
+        raise "No redis_url in session #{session.inspect}"
       end
     end
 
