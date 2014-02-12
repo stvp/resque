@@ -201,7 +201,7 @@ module Resque
       if load_redis_from_session
         establish_redis_connection
       else
-        raise "Couldn't load Redis from session: #{session.inspect}"
+        raise "Couldn't load Redis from session: #{session.to_hash.inspect}"
       end
     end
 
