@@ -8,10 +8,6 @@ class RequestDataExtractor
       :route => env["PATH_INFO"]
     })
   end
-
-  def rollbar_request_params(env)
-    env['action_dispatch.request.parameters'] || {}
-  end
 end
 
 def setup_rollbar
