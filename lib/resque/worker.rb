@@ -59,6 +59,7 @@ module Resque
     attr_accessor :run_at_exit_hooks
 
     attr_writer :to_s
+    attr_writer :pid
 
     # Returns an array of all worker objects.
     def self.all
@@ -94,9 +95,11 @@ module Resque
     # Returns a single worker object. Accepts a string id.
     def self.find(worker_id)
       if exists? worker_id
-        queues = worker_id.split(':')[-1].split(',')
+        host, pid, queues_raw = worker_id.split(':')
+        queues = queues_raw.split(',')
         worker = new(*queues)
         worker.to_s = worker_id
+        worker.pid = pid.to_i
         worker
       else
         nil
@@ -410,10 +413,19 @@ module Resque
     end
 
     # Kill the child and shutdown immediately.
+    # If not forking, abort this process.
     def shutdown!
       shutdown
       if term_child
-        new_kill_child
+        if fork_per_job?
+          new_kill_child
+        else
+          # Raise TermException in the same process
+          trap('TERM') do
+            # ignore subsequent terms
+          end
+          raise TermException.new("SIGTERM")
+        end
       else
         kill_child
       end
@@ -620,7 +632,11 @@ module Resque
     end
 
     def will_fork?
-      !@cant_fork && !$TESTING && (ENV["FORK_PER_JOB"] != 'false')
+      !@cant_fork && !$TESTING && fork_per_job?
+    end
+
+    def fork_per_job?
+      ENV["FORK_PER_JOB"] != 'false'
     end
 
     # Returns a symbol representing the current worker state,
@@ -698,9 +714,9 @@ module Resque
 
     # Given a string, sets the procline ($0) and logs.
     # Procline is always in the format of:
-    #   resque-VERSION: STRING
+    #   RESQUE_PROCLINE_PREFIXresque-VERSION: STRING
     def procline(string)
-      $0 = "resque-#{Resque::Version}: #{string}"
+      $0 = "#{ENV['RESQUE_PROCLINE_PREFIX']}resque-#{Resque::Version}: #{string}"
       log! $0
     end
 

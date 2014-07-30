@@ -220,6 +220,30 @@ context "Resque::Worker" do
     assert_equal 2, Resque::Failure.count
   end
 
+  test "supports setting the procline to have arbitrary prefixes and suffixes" do
+    prefix = 'WORKER-TEST-PREFIX/'
+    suffix = 'worker-test-suffix'
+    ver = Resque::Version
+
+    old_prefix = ENV['RESQUE_PROCLINE_PREFIX']
+    ENV.delete('RESQUE_PROCLINE_PREFIX')
+    old_procline = $0
+
+    @worker.procline(suffix)
+    assert_equal $0, "resque-#{ver}: #{suffix}"
+
+    ENV['RESQUE_PROCLINE_PREFIX'] = prefix
+    @worker.procline(suffix)
+    assert_equal $0, "#{prefix}resque-#{ver}: #{suffix}"
+
+    $0 = old_procline
+    if old_prefix.nil?
+      ENV.delete('RESQUE_PROCLINE_PREFIX')
+    else
+      ENV['RESQUE_PROCLINE_PREFIX'] = old_prefix
+    end
+  end
+
   test "strips whitespace from queue names" do
     queues = "critical, high, low".split(',')
     worker = Resque::Worker.new(*queues)
@@ -316,7 +340,7 @@ context "Resque::Worker" do
   end
 
   test "complains if no queues are given" do
-    assert_raise Resque::NoQueueError do
+    assert_raises Resque::NoQueueError do
       Resque::Worker.new
     end
   end
@@ -427,17 +451,42 @@ context "Resque::Worker" do
 
   test "sets $0 while working" do
     @worker.extend(AssertInWorkBlock).work(0) do
+      prefix = ENV['RESQUE_PROCLINE_PREFIX']
       ver = Resque::Version
-      assert_equal "resque-#{ver}: Processing jobs since #{Time.now.to_i} [SomeJob]", $0
+      assert_equal "#{prefix}resque-#{ver}: Processing jobs since #{Time.now.to_i} [SomeJob]", $0
     end
   end
 
   test "can be found" do
     @worker.extend(AssertInWorkBlock).work(0) do
       found = Resque::Worker.find(@worker.to_s)
+
+      # we ensure that the found ivar @pid is set to the correct value since
+      # Resque::Worker#pid will use it instead of Process.pid if present
+      assert_equal @worker.pid, found.instance_variable_get(:@pid)
+
       assert_equal @worker.to_s, found.to_s
       assert found.working?
       assert_equal @worker.job, found.job
+    end
+  end
+
+  test 'can find others' do
+    # inject fake worker
+    other_worker = Resque::Worker.new(:other_jobs)
+    other_worker.pid = 123456
+    other_worker.register_worker
+
+    begin
+      @worker.extend(AssertInWorkBlock).work(0) do
+        found = Resque::Worker.find(other_worker.to_s)
+        assert_equal other_worker.to_s, found.to_s
+        assert_equal other_worker.pid, found.pid
+        assert !found.working?
+        assert found.job.empty?
+      end
+    ensure
+      other_worker.unregister_worker
     end
   end
 
@@ -918,6 +967,71 @@ context "Resque::Worker" do
             Resque.redis.del(*remaining_keys) unless remaining_keys.empty?
           end
         end
+      end
+    end
+
+    test "exits with Resque::TermException when using TERM_CHILD and not forking" do
+      begin
+        class LongRunningJob
+          @queue = :long_running_job
+
+          def self.perform(run_time)
+            Resque.redis.client.reconnect # get its own connection
+            Resque.redis.rpush('term-exception-test:start', Process.pid)
+            sleep run_time
+            Resque.redis.rpush('term-exception-test:result', 'Finished Normally')
+          rescue Resque::TermException => e
+            Resque.redis.rpush('term-exception-test:result', %Q(Caught TermException: #{e.inspect}))
+          ensure
+            Resque.redis.rpush('term-exception-test:final', 'exiting.')
+          end
+        end
+
+        Resque.enqueue(LongRunningJob, 5)
+
+        worker_pid = Kernel.fork do
+          # reconnect to redis
+          Resque.redis.client.reconnect
+
+          # ensure we don't fork (in worker)
+          $TESTING = false
+          ENV['FORK_PER_JOB'] = 'false'
+
+          worker = Resque::Worker.new(:long_running_job)
+          worker.term_timeout = 1
+          worker.term_child = 1
+
+          worker.work(0)
+          exit!
+        end
+
+        # ensure the worker is started
+        start_status = Resque.redis.blpop('term-exception-test:start', 5)
+        assert_not_nil start_status
+        child_pid = start_status[1].to_i
+        assert_operator child_pid, :>, 0
+
+        # send signal to abort the worker
+        Process.kill('TERM', worker_pid)
+        Process.waitpid(worker_pid)
+
+        # wait to see how it all came down
+        result = Resque.redis.blpop('term-exception-test:result', 5)
+        assert_not_nil result
+        assert !result[1].start_with?('Finished Normally'), 'Job finished normally. Sleep not long enough?'
+        assert result[1].start_with?('Caught TermException'), 'TermException not raised in child.'
+
+        # ensure that the child pid is no longer running
+        child_still_running = !(`ps -p #{child_pid.to_s} -o pid=`).empty?
+        assert !child_still_running
+
+        # see if post-cleanup occurred.
+        post_cleanup_occurred = Resque.redis.lpop( 'term-exception-test:final' )
+        assert post_cleanup_occurred, 'post cleanup did not occur. SIGKILL sent too early?'
+
+      ensure
+        remaining_keys = Resque.redis.keys('term-exception-test:*') || []
+        Resque.redis.del(*remaining_keys) unless remaining_keys.empty?
       end
     end
 
