@@ -10,12 +10,25 @@ class RequestDataExtractor
   end
 end
 
-def setup_rollbar
-  if ENV["ROLLBAR_ACCESS_TOKEN"]
-    Rollbar.configure do |config|
-      config.access_token = ENV["ROLLBAR_ACCESS_TOKEN"]
-      config.environment = Sinatra::Base.environment
-      config.root = Dir.pwd
+module SinatraRollbarIntegration
+  def self.included( base )
+    base.class_eval do
+      configure do
+        if ENV["ROLLBAR_ACCESS_TOKEN"]
+          Rollbar.configure do |config|
+            config.access_token = ENV["ROLLBAR_ACCESS_TOKEN"]
+            config.environment = Sinatra::Base.environment
+            config.root = Dir.pwd
+          end
+        end
+      end
+
+      # Report errors to Rollbar.
+      error do
+        request_data = RequestDataExtractor.new.from_rack( env )
+        Rollbar.report_exception( env['sinatra.error'], request_data )
+        "An error occurred and has been reported."
+      end
     end
   end
 end

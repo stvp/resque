@@ -13,6 +13,7 @@ end
 module Resque
   class Server < Sinatra::Base
     require 'resque/server/helpers'
+    include SinatraRollbarIntegration
 
     dir = File.dirname(File.expand_path(__FILE__))
 
@@ -32,17 +33,6 @@ module Resque
                                :secret => ENV["SESSION_SECRET"]
 
     enable :logging
-
-    configure do
-      setup_rollbar
-    end
-
-    # Report errors to Rollbar.
-    error do
-      request_data = RequestDataExtractor.new.from_rack( env )
-      Rollbar.report_exception( env['sinatra.error'], request_data ) rescue nil
-      "An error occurred and has been reported."
-    end
 
     helpers do
       include Rack::Utils
