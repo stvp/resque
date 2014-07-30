@@ -5,10 +5,7 @@ class RequestDataExtractor
   include Rollbar::RequestDataExtractor
   def from_rack(env)
     extract_request_data_from_rack(env).merge({
-      :route => {
-        :controller => env["PATH_INFO"],
-        :action => ""
-      }
+      :route => env["PATH_INFO"]
     })
   end
 

@@ -26,9 +26,6 @@ module Resque
 
     set :static, true
 
-    # Allow iframe embedding
-    set :protection, :except => :frame_options
-
     use Rack::Session::Cookie, :key => 'rack.session',
                                :domain => ENV["SESSION_DOMAIN"],
                                :path => '/',
