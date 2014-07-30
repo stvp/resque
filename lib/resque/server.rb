@@ -142,8 +142,8 @@ module Resque
 
       def load_redis_from_session
         if session[:redis_url].to_s != ""
-          Resque.redis = Redis.new( url: session[:redis_url], driver: :hiredis )
-          Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace]
+          Resque.redis = Redis.new( url: session[:redis_url], db: session[:redis_db].to_i, driver: :hiredis )
+          Resque.redis.namespace = session[:redis_namespace] if session[:redis_namespace].to_s != ""
           true
         else
           Resque.redis = nil
@@ -199,9 +199,11 @@ module Resque
     end
 
     # Set a Redis URL for this session
-    get "/login/:url/?:namespace?/?" do
+    get "/login/:url/*" do
       session[:redis_url] = "redis://#{params[:url]}"
-      session[:redis_namespace] = params[:namespace]
+      params[:splat][0].to_s =~ %r{^/?(\d*)/?(.*)}
+      session[:redis_db] = $1.to_i
+      session[:redis_namespace] = $2.to_s
       redirect "/overview"
     end
 
