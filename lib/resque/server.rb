@@ -200,6 +200,10 @@ module Resque
       Resque.redis = nil
     end
 
+    error Redis::CommandError do
+      erb :error_auth
+    end
+
     # Set a Redis URL for this session
     get "/login/:url/*" do
       session[:redis_url] = "redis://#{params[:url]}"
