@@ -172,8 +172,6 @@ module Resque
         erb page.to_sym, {:layout => layout}, :resque => Resque
       rescue Errno::ECONNREFUSED
         erb :error, {:layout => false}, :error => "Can't connect to Redis! (#{Resque.redis_id})"
-      rescue Resque::NoQueueError
-        erb :error_no_queue
       end
     end
 
@@ -202,6 +200,10 @@ module Resque
 
     error Redis::CommandError do
       erb :error_auth
+    end
+
+    error Resque::NoQueueError do
+      erb :error_no_queue
     end
 
     # Set a Redis URL for this session
