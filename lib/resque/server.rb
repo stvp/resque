@@ -206,6 +206,14 @@ module Resque
       erb :error_no_queue
     end
 
+    error Redis::CannotConnectError do
+      if Resque.redis.inspect =~ /\.redisgreen\.net/
+        erb :error_cannot_connect_redisgreen
+      else
+        erb :error_cannot_connect_redismonitor
+      end
+    end
+
     # Set a Redis URL for this session
     get "/login/:url/*" do
       session[:redis_url] = "redis://#{params[:url]}"
