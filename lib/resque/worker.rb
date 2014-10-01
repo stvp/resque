@@ -110,6 +110,8 @@ module Resque
       # else
         # nil
       # end
+    rescue NoMethodError # undefined method `split' for nil:NilClass
+      nil
     end
 
     # Alias of `find`
