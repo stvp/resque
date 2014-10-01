@@ -15,6 +15,8 @@ module Resque
     require 'resque/server/helpers'
     include SinatraRollbarIntegration
 
+    class NoSession < StandardError; end
+
     dir = File.dirname(File.expand_path(__FILE__))
 
     set :views,  "#{dir}/server/views"
@@ -188,7 +190,7 @@ module Resque
       if load_redis_from_session
         establish_redis_connection
       else
-        raise "Couldn't load Redis from session: #{session.to_hash.inspect}"
+        raise Resque::Server::NoSession
       end
     end
 
@@ -212,6 +214,10 @@ module Resque
       else
         erb :error_cannot_connect_redismonitor
       end
+    end
+
+    error Resque::Server::NoSession do
+      erb :error_no_session
     end
 
     # Set a Redis URL for this session
