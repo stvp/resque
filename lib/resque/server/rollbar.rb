@@ -1,4 +1,5 @@
 require 'rollbar'
+require 'rollbar/request_data_extractor'
 
 # Get better info than Rollbar's RequestDataExtractor
 class RequestDataExtractor
