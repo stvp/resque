@@ -1,4 +1,4 @@
-<% if params[:id] && (worker = Resque::Worker.find(params[:id])) && worker.job %>
+<% if params[:id] && (worker = Resque::Worker.find(params[:id])) && (data = worker.job) %>
   <h1><%= worker %>'s job</h1>
 
   <table>
@@ -14,14 +14,13 @@
         <td><img src="<%=u 'working.png' %>" alt="working" title="working"></td>
         <% host, pid, _ = worker.to_s.split(':') %>
         <td><a href="<%=u "/workers/#{worker}" %>"><%= host %>:<%= pid %></a></td>
-        <% data = worker.job %>
         <% queue = data['queue'] %>
         <td><a class="queue" href="<%=u "/queues/#{queue}" %>"><%= queue %></a></td>
         <td><span class="time"><%= data['run_at'] %></span></td>
         <td>
-          <code><%= data['payload']['class'] %></code>
+          <code><%= data['payload'].to_h['class'] %></code>
         </td>
-        <td><%=h data['payload']['args'].inspect %></td>
+        <td><%=h data['payload'].to_h['args'].inspect %></td>
       </tr>
   </table>
 
@@ -49,7 +48,7 @@
     </tr>
     <% end %>
 
-    <% worker_jobs.sort_by {|w, j| j['run_at'] ? j['run_at'] : '' }.each do |worker, job| %>
+    <% worker_jobs.sort_by {|w, j| j['run_at'] ? j['run_at'].to_s() : '' }.each do |worker, job| %>
       <tr>
         <td class='icon'><img src="<%=u state = worker.state %>.png" alt="<%= state %>" title="<%= state %>"></td>
         <% host, pid, queues = worker.to_s.split(':') %>

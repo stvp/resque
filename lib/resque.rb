@@ -22,6 +22,7 @@ require 'resque/plugin'
 require 'resque/vendor/utf8_util'
 
 module Resque
+  include Helpers
   extend self
 
   # Given a Ruby object, returns a string suitable for storage in a
@@ -49,19 +50,54 @@ module Resque
     end
   end
 
+  # Given a word with dashes, returns a camel cased version of it.
+  #
+  # classify('job-name') # => 'JobName'
+  def classify(dashed_word)
+    dashed_word.split('-').each { |part| part[0] = part[0].chr.upcase }.join
+  end
+
+  # Tries to find a constant with the name specified in the argument string:
+  #
+  # constantize("Module") # => Module
+  # constantize("Test::Unit") # => Test::Unit
+  #
+  # The name is assumed to be the one of a top-level constant, no matter
+  # whether it starts with "::" or not. No lexical context is taken into
+  # account:
+  #
+  # C = 'outside'
+  # module M
+  #   C = 'inside'
+  #   C # => 'inside'
+  #   constantize("C") # => 'outside', same as ::C
+  # end
+  #
+  # NameError is raised when the constant is unknown.
+  def constantize(camel_cased_word)
+    camel_cased_word = camel_cased_word.to_s
+
+    if camel_cased_word.include?('-')
+      camel_cased_word = classify(camel_cased_word)
+    end
+
+    names = camel_cased_word.split('::')
+    names.shift if names.empty? || names.first.empty?
+
+    constant = Object
+    names.each do |name|
+      args = Module.method(:const_get).arity != 1 ? [false] : []
+
+      if constant.const_defined?(name, *args)
+        constant = constant.const_get(name)
+      else
+        constant = constant.const_missing(name)
+      end
+    end
+    constant
+  end
+
   extend ::Forwardable
-
-  def self.config=(options = {})
-    @config = Config.new(options)
-  end
-
-  def self.config
-    @config ||= Config.new
-  end
-
-  def self.configure
-    yield config
-  end
 
   # Accepts:
   #   1. A 'hostname:port' String
@@ -168,8 +204,10 @@ module Resque
     block ? register_hook(:before_pause, block) : hooks(:before_pause)
   end
 
-  # Set the after_pause proc.
-  attr_writer :before_pause
+  # Register a before_pause proc.
+  def before_pause=(block)
+    register_hook(:before_pause, block)
+  end
 
   # The `after_pause` hook will be run in the parent process after the
   # worker has paused (via SIGCONT).
@@ -177,8 +215,10 @@ module Resque
     block ? register_hook(:after_pause, block) : hooks(:after_pause)
   end
 
-  # Set the after_continue proc.
-  attr_writer :after_pause
+  # Register an after_pause proc.
+  def after_pause=(block)
+    register_hook(:after_pause, block)
+  end
 
   def to_s
     "Resque Client connected to #{redis_id}"
@@ -428,7 +468,7 @@ module Resque
   # Returns a hash, similar to redis-rb's #info, of interesting stats.
   def info
     return {
-      :pending   => queues.inject(0) { |m,k| m + size(k) },
+      :pending   => queue_sizes.inject(0) { |sum, (queue_name, queue_size)| sum + queue_size },
       :processed => Stat[:processed],
       :queues    => queues.size,
       :workers   => workers.size.to_i,
@@ -445,6 +485,47 @@ module Resque
     redis.keys("*").map do |key|
       key.sub("#{redis.namespace}:", '')
     end
+  end
+
+  # Returns a hash, mapping queue names to queue sizes
+  def queue_sizes
+    queue_names = queues
+
+    sizes = redis.pipelined do
+      queue_names.each do |name|
+        redis.llen("queue:#{name}")
+      end
+    end
+
+    Hash[queue_names.zip(sizes)]
+  end
+
+  # Returns a hash, mapping queue names to (up to `sample_size`) samples of jobs in that queue
+  def sample_queues(sample_size = 1000)
+    queue_names = queues
+
+    samples = redis.pipelined do
+      queue_names.each do |name|
+        key = "queue:#{name}"
+        redis.llen(key)
+        redis.lrange(key, 0, sample_size - 1)
+      end
+    end
+
+    hash = {}
+
+    queue_names.zip(samples.each_slice(2).to_a) do |queue_name, (queue_size, serialized_samples)|
+      samples = serialized_samples.map do |serialized_sample|
+        Job.decode(serialized_sample)
+      end
+
+      hash[queue_name] = {
+        :size => queue_size,
+        :samples => samples
+      }
+    end
+
+    hash
   end
 
   private
@@ -466,6 +547,11 @@ module Resque
   # Clear all hooks given a hook name.
   def clear_hooks(name)
     @hooks && @hooks[name] = []
+  end
+
+  # Retrieve all hooks
+  def hooks
+    @hooks || {}
   end
 
   # Retrieve all hooks of a given name.

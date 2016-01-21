@@ -193,7 +193,18 @@ If a job raises an exception, it is logged and handed off to the
 `Resque::Failure` module. Failures are logged either locally in Redis
 or using some different backend.
 
-For example, Resque ships with Airbrake support.
+For example, Resque ships with Airbrake support. To configure it, put
+the following into an initialisation file or into your rake job:
+
+``` ruby
+# send errors which occur in background jobs to redis and airbrake
+require 'resque/failure/multiple'
+require 'resque/failure/redis'
+require 'resque/failure/airbrake'
+
+Resque::Failure::Multiple.classes = [Resque::Failure::Redis, Resque::Failure::Airbrake]
+Resque::Failure.backend = Resque::Failure::Multiple
+```
 
 Keep this in mind when writing your jobs: you may want to throw
 exceptions you would not normally throw in order to assist debugging.
@@ -440,7 +451,7 @@ The Front End
 Resque comes with a Sinatra-based front end for seeing what's up with
 your queue.
 
-![The Front End](https://img.skitch.com/20110528-pc67a8qsfapgjxf5gagxd92fcu.png)
+![The Front End](https://camo.githubusercontent.com/64d150a243987ffbc33f588bd6d7722a0bb8d69a/687474703a2f2f7475746f7269616c732e6a756d7073746172746c61622e636f6d2f696d616765732f7265737175655f6f766572766965772e706e67)
 
 ### Standalone
 
@@ -818,7 +829,7 @@ sort it out.
 Contributing
 ------------
 
-Read the [Contributing][cb] wiki page first.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 Once you've made your great commits:
 

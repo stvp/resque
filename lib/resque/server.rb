@@ -49,9 +49,13 @@ module Resque
       end
 
       def url_path(*path_parts)
-        [ path_prefix, path_parts ].join("/").squeeze('/')
+        [ url_prefix, path_prefix, path_parts ].join("/").squeeze('/')
       end
       alias_method :u, :url_path
+
+      def redirect_url_path(*path_parts)
+        [ path_prefix, path_parts ].join("/").squeeze('/')
+      end
 
       def path_prefix
         request.env['SCRIPT_NAME']
@@ -69,6 +73,10 @@ module Resque
 
       def tabs
         Resque::Server.tabs
+      end
+
+      def url_prefix
+        Resque::Server.url_prefix
       end
 
       def redis_get_size(key)
@@ -235,7 +243,7 @@ module Resque
 
     # to make things easier on ourselves
     get "/?" do
-      redirect url_path(:overview)
+      redirect redirect_url_path(:overview)
     end
 
     %w( overview workers ).each do |page|
@@ -290,15 +298,13 @@ module Resque
     end
 
     post "/failed/requeue/all" do
-      Resque::Failure.count.times do |num|
-        Resque::Failure.requeue(num)
-      end
+      Resque::Failure.requeue_all
       redirect u('failed')
     end
 
     post "/failed/:queue/requeue/all" do
       Resque::Failure.requeue_queue Resque::Failure.job_queue_name(params[:queue])
-      redirect url_path("/failed/#{params[:queue]}")
+      redirect redirect_url_path("/failed/#{params[:queue]}")
     end
 
     get "/failed/requeue/:index/?" do
@@ -310,13 +316,27 @@ module Resque
       end
     end
 
+    get "/failed/:queue/requeue/:index/?" do
+      Resque::Failure.requeue(params[:index], params[:queue])
+      if request.xhr?
+        return Resque::Failure.all(params[:index],1,params[:queue])['retried_at']
+      else
+        redirect url_path("/failed/#{params[:queue]}")
+      end
+    end
+
     get "/failed/remove/:index/?" do
       Resque::Failure.remove(params[:index])
       redirect u('failed')
     end
 
+    get "/failed/:queue/remove/:index/?" do
+      Resque::Failure.remove(params[:index], params[:queue])
+      redirect url_path("/failed/#{params[:queue]}")
+    end
+
     get "/stats/?" do
-      redirect url_path("/stats/resque")
+      redirect redirect_url_path("/stats/resque")
     end
 
     get "/stats/:id/?" do
@@ -351,6 +371,14 @@ module Resque
 
     def self.tabs
       @tabs ||= ["Overview", "Working", "Failed", "Queues", "Workers", "Stats"]
+    end
+
+    def self.url_prefix=(url_prefix)
+      @url_prefix = url_prefix
+    end
+
+    def self.url_prefix
+      (@url_prefix.nil? || @url_prefix.empty?) ? '' : @url_prefix + '/'
     end
   end
 end

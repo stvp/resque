@@ -10,6 +10,8 @@ module Resque
   # It also ensures workers are always listening to signals from you,
   # their master, and can react accordingly.
   class Worker
+    include Resque::Helpers
+    extend Resque::Helpers
     include Resque::Logging
 
     def redis
@@ -23,36 +25,22 @@ module Resque
     # Given a Ruby object, returns a string suitable for storage in a
     # queue.
     def encode(object)
-      if MultiJson.respond_to?(:dump) && MultiJson.respond_to?(:load)
-        MultiJson.dump object
-      else
-        MultiJson.encode object
-      end
+      Resque.encode(object)
     end
 
     # Given a string, returns a Ruby object.
     def decode(object)
-      return unless object
-
-      begin
-        if MultiJson.respond_to?(:dump) && MultiJson.respond_to?(:load)
-          MultiJson.load object
-        else
-          MultiJson.decode object
-        end
-      rescue ::MultiJson::DecodeError => e
-        raise DecodeException, e.message, e.backtrace
-      end
+      Resque.decode(object)
     end
-
-    # Boolean indicating whether this worker can or can not fork.
-    # Automatically set if a fork(2) fails.
-    attr_accessor :cant_fork
 
     attr_accessor :term_timeout
 
     # decide whether to use new_kill_child logic
     attr_accessor :term_child
+
+    # should term kill workers gracefully (vs. immediately)
+    # Makes SIGTERM work like SIGQUIT
+    attr_accessor :graceful_term
 
     # When set to true, forked workers will exit with `exit`, calling any `at_exit` code handlers that have been
     # registered in the application. Otherwise, forked workers exit with `exit!`
@@ -63,7 +51,7 @@ module Resque
 
     # Returns an array of all worker objects.
     def self.all
-      Array(redis.smembers(:workers)).map { |id| find(id) }.compact
+      Array(redis.smembers(:workers)).map { |id| find(id, :skip_exists => true) }.compact
     end
 
     # Returns an array of all worker objects currently processing
@@ -88,19 +76,21 @@ module Resque
       end
 
       reportedly_working.keys.map do |key|
-        find key.sub("worker:", '')
+        find(key.sub("worker:", ''), :skip_exists => true)
       end.compact
     end
 
     # Returns a single worker object. Accepts a string id.
-    def self.find(worker_id)
+    def self.find(worker_id, options = {})
       # 9/30/14 - Removed the 'exists?' call (which just calls "SISMEMBER
       # resque:workers" because this method is called directly from methods that
       # are pulling the worker_ids with "SMEMBERS resque:workers", making the
       # O(n) SISMEMBER queries totally pointless. These queries make up the bulk
       # of the queries in the Resque web dashboard.
 
-      # if exists? worker_id
+      skip_exists = options[:skip_exists]
+
+      # if skip_exists || exists?(worker_id)
         host, pid, queues_raw = worker_id.split(':')
         queues = queues_raw.split(',')
         worker = new(*queues)
@@ -110,8 +100,7 @@ module Resque
       # else
         # nil
       # end
-    rescue NoMethodError # undefined method `split' for nil:NilClass
-      nil
+      end
     end
 
     # Alias of `find`
@@ -137,9 +126,35 @@ module Resque
     # in alphabetical order. Queues can be dynamically added or
     # removed without needing to restart workers using this method.
     def initialize(*queues)
+      queues = queues.empty? ? (ENV["QUEUES"] || ENV['QUEUE']).to_s.split(',') : queues
+
+      if ENV['LOGGING'] || ENV['VERBOSE']
+        self.verbose = ENV['LOGGING'] || ENV['VERBOSE']
+      end
+      if ENV['VVERBOSE']
+        self.very_verbose = ENV['VVERBOSE']
+      end
+      self.term_timeout = ENV['RESQUE_TERM_TIMEOUT'] || 4.0
+      self.term_child = ENV['TERM_CHILD']
+      self.graceful_term = ENV['GRACEFUL_TERM']
+      self.run_at_exit_hooks = ENV['RUN_AT_EXIT_HOOKS']
+
+      if ENV['BACKGROUND']
+        unless Process.respond_to?('daemon')
+            abort "env var BACKGROUND is set, which requires ruby >= 1.9"
+        end
+        Process.daemon(true)
+        self.reconnect
+      end
+
+      if ENV['PIDFILE']
+        File.open(ENV['PIDFILE'], 'w') { |f| f << pid }
+      end
+
       @queues = queues.map { |queue| queue.to_s.strip }
       @shutdown = nil
       @paused = nil
+      @before_first_fork_hook_ran = false
       validate_queues
     end
 
@@ -196,7 +211,7 @@ module Resque
             unregister_signal_handlers if will_fork? && term_child
             begin
 
-              reconnect
+              reconnect if will_fork?
               perform(job, &block)
 
             rescue Exception => exception
@@ -327,16 +342,16 @@ module Resque
     # Not every platform supports fork. Here we do our magic to
     # determine if yours does.
     def fork(job)
-      return if @cant_fork
+      return unless will_fork?
 
       # Only run before_fork hooks if we're actually going to fork
-      # (after checking @cant_fork)
+      # (after checking will_fork?)
       run_hook :before_fork, job
 
       begin
         # IronRuby doesn't support `Kernel.fork` yet
         if Kernel.respond_to?(:fork)
-          Kernel.fork if will_fork?
+          Kernel.fork
         else
           raise NotImplementedError
         end
@@ -348,7 +363,9 @@ module Resque
 
     # Runs all the methods needed when a worker begins its lifecycle.
     def startup
-      Kernel.warn "WARNING: This way of doing signal handling is now deprecated. Please see http://hone.heroku.com/resque/2012/08/21/resque-signals.html for more info." unless term_child or $TESTING
+      if !term_child
+        Kernel.warn "WARNING: This way of doing signal handling is now deprecated. Please see http://hone.heroku.com/resque/2012/08/21/resque-signals.html for more info."
+      end
       enable_gc_optimizations
       register_signal_handlers
       prune_dead_workers
@@ -377,7 +394,7 @@ module Resque
     # USR2: Don't process any new jobs
     # CONT: Start processing jobs again after a USR2
     def register_signal_handlers
-      trap('TERM') { shutdown!  }
+      trap('TERM') { graceful_term ? shutdown : shutdown!  }
       trap('INT')  { shutdown!  }
 
       begin
@@ -398,11 +415,11 @@ module Resque
 
     def unregister_signal_handlers
       trap('TERM') do
-        trap ('TERM') do 
-          # ignore subsequent terms               
-        end  
-        raise TermException.new("SIGTERM") 
-      end 
+        trap ('TERM') do
+          # ignore subsequent terms
+        end
+        raise TermException.new("SIGTERM")
+      end
       trap('INT', 'DEFAULT')
 
       begin
@@ -489,6 +506,7 @@ module Resque
     # currently running one).
     def pause_processing
       log "USR2 received; pausing job processing"
+      run_hook :before_pause, self
       @paused = true
     end
 
@@ -496,6 +514,7 @@ module Resque
     def unpause_processing
       log "CONT received; resuming job processing"
       @paused = false
+      run_hook :after_pause, self
     end
 
     # Looks for any workers which should be running on this server
@@ -516,9 +535,9 @@ module Resque
         worker_queues = worker_queues_raw.split(",")
         unless @queues.include?("*") || (worker_queues.to_set == @queues.to_set)
           # If the worker we are trying to prune does not belong to the queues
-          # we are listening to, we should not touch it. 
+          # we are listening to, we should not touch it.
           # Attempt to prune a worker from different queues may easily result in
-          # an unknown class exception, since that worker could easily be even 
+          # an unknown class exception, since that worker could easily be even
           # written in different language.
           next
         end
@@ -541,12 +560,14 @@ module Resque
     # Runs a named hook, passing along any arguments.
     def run_hook(name, *args)
       return unless hooks = Resque.send(name)
+      return if name == :before_first_fork && @before_first_fork_hook_ran
       msg = "Running #{name} hooks"
       msg << " with #{args.inspect}" if args.any?
       log msg
 
       hooks.each do |hook|
         args.any? ? hook.call(*args) : hook.call
+        @before_first_fork_hook_ran = true if name == :before_first_fork
       end
     end
 
@@ -640,7 +661,7 @@ module Resque
     end
 
     def will_fork?
-      !@cant_fork && !$TESTING && fork_per_job?
+      !@cant_fork && fork_per_job?
     end
 
     def fork_per_job?
@@ -738,26 +759,18 @@ module Resque
       debug(message)
     end
 
-    # Deprecated legacy methods for controlling the logging threshhold
-    # Use Resque.logger.level now, e.g.:
-    #
-    #     Resque.logger.level = Logger::DEBUG
-    #
     def verbose
-      logger_severity_deprecation_warning
       @verbose
     end
 
     def very_verbose
-      logger_severity_deprecation_warning
       @very_verbose
     end
 
     def verbose=(value);
-      logger_severity_deprecation_warning
-
       if value && !very_verbose
         Resque.logger.formatter = VerboseFormatter.new
+        Resque.logger.level = Logger::INFO
       elsif !value
         Resque.logger.formatter = QuietFormatter.new
       end
@@ -766,25 +779,17 @@ module Resque
     end
 
     def very_verbose=(value)
-      logger_severity_deprecation_warning
       if value
         Resque.logger.formatter = VeryVerboseFormatter.new
+        Resque.logger.level = Logger::DEBUG
       elsif !value && verbose
         Resque.logger.formatter = VerboseFormatter.new
+        Resque.logger.level = Logger::INFO
       else
         Resque.logger.formatter = QuietFormatter.new
       end
 
       @very_verbose = value
-    end
-
-    def logger_severity_deprecation_warning
-      return if $TESTING
-      return if $warned_logger_severity_deprecation
-      Kernel.warn "*** DEPRECATION WARNING: Resque::Worker#verbose and #very_verbose are deprecated. Please set Resque.logger.level instead"
-      Kernel.warn "Called from: #{caller[0..5].join("\n\t")}"
-      $warned_logger_severity_deprecation = true
-      nil
     end
   end
 end

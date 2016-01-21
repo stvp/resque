@@ -39,7 +39,7 @@ module Resque
       end
 
       def self.each(offset = 0, limit = self.count, queue = :failed, class_name = nil, order = 'desc')
-        all_items = Array(all(offset, limit, queue))
+        all_items = limit == 1 ? [all(offset,limit,queue)] : Array(all(offset, limit, queue))
         reversed = false
         if order.eql? 'desc'
           all_items.reverse!
@@ -48,7 +48,7 @@ module Resque
         all_items.each_with_index do |item, i|
           if !class_name || (item['payload'] && item['payload']['class'] == class_name)
             if reversed
-              id = (all_items.length - 1) - (offset + i)
+              id = (all_items.length - 1) + (offset - i)
             else
               id = offset + i
             end
@@ -62,14 +62,16 @@ module Resque
         Resque.redis.del(:failed)
       end
 
-      def self.requeue(id)
+      def self.requeue(id, queue = nil)
+        check_queue(queue)
         item = all(id)
         item['retried_at'] = Time.now.strftime("%Y/%m/%d %H:%M:%S")
         Resque.redis.lset(:failed, id, Resque.encode(item))
         Job.create(item['queue'], item['payload']['class'], *item['payload']['args'])
       end
 
-      def self.remove(id)
+      def self.remove(id, queue = nil)
+        check_queue(queue)
         sentinel = ""
         Resque.redis.lset(:failed, id, sentinel)
         Resque.redis.lrem(:failed, 1,  sentinel)
@@ -80,6 +82,12 @@ module Resque
         while job = all(i)
            requeue(i) if job['queue'] == queue
            i += 1
+        end
+      end
+
+      def self.requeue_all
+        count.times do |num|
+          requeue(num)
         end
       end
 
@@ -103,6 +111,7 @@ module Resque
         index = backtrace.index { |item| item.include?('/lib/resque/job.rb') }
         backtrace.first(index.to_i)
       end
+
     end
   end
 end
