@@ -82,24 +82,17 @@ module Resque
 
     # Returns a single worker object. Accepts a string id.
     def self.find(worker_id, options = {})
-      # 9/30/14 - Removed the 'exists?' call (which just calls "SISMEMBER
-      # resque:workers" because this method is called directly from methods that
-      # are pulling the worker_ids with "SMEMBERS resque:workers", making the
-      # O(n) SISMEMBER queries totally pointless. These queries make up the bulk
-      # of the queries in the Resque web dashboard.
-
       skip_exists = options[:skip_exists]
 
-      # if skip_exists || exists?(worker_id)
+      if skip_exists || exists?(worker_id)
         host, pid, queues_raw = worker_id.split(':')
         queues = queues_raw.split(',')
         worker = new(*queues)
         worker.to_s = worker_id
         worker.pid = pid.to_i
         worker
-      # else
-        # nil
-      # end
+      else
+        nil
       end
     end
 
